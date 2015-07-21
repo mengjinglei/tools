@@ -1,0 +1,66 @@
+<! DOCTYPE html>
+<html>
+<head>
+	<script type="text/javascript" src="js/jquery.js"></script>
+	<script type="text/javascript" src="js/custom.js"></script>
+	<!-- 新 Bootstrap 核心 CSS 文件 -->
+<link rel="stylesheet" href="css/bootstrap.min.css">
+
+<!-- 可选的Bootstrap主题文件（一般不用引入） -->
+<link rel="stylesheet" href="css/bootstrap-theme.min.css">
+
+<!-- 最新的 Bootstrap 核心 JavaScript 文件 -->
+<script src="js/bootstrap.min.js"></script>
+
+</head>
+<div class="container">
+<p>
+<form class="form-horizontal">
+
+<div class="form-group">
+    <label class="col-sm-2 control-label">Base URL</label>
+    <div class="col-sm-10">
+      <input type="url" class="form-control" id="url" value="http://127.0.0.1:8998/v1/repos/">
+    </div>
+</div>
+
+<div class="form-group">
+    <label class="col-sm-2 control-label">URI</label>
+    <div class="col-sm-10">
+      <input type="text" class="form-control" id="uri" placeholder="uri">
+    </div>
+</div>
+
+<div class="form-group">
+    <label class="col-sm-2 control-label">Post Body</label>
+    <div class="col-sm-10">
+      <textarea rows="10" id="postBody" class="form-control"></textarea>
+    </div>
+</div>
+ 
+ <div class="form-group">
+    <label class="col-sm-2 control-label"></label>
+    <div class="col-sm-10">
+      <button type="button" class="btn btn-primary" id="submitButton">Send</button>
+    </div>
+</div>
+
+ <div class="form-group">
+    <label class="col-sm-2 control-label">Status</label>
+    <div class="col-sm-10">
+    	<p class="form-control" id="statuscode"></p>
+    </div>
+</div>
+
+ <div class="form-group">
+    <label class="col-sm-2 control-label">Response Body</label>
+    <div class="col-sm-10">
+    	<textarea rows="5" class="form-control" id="response"></textarea>
+    </div>
+</div>
+
+</form>
+
+
+</div>
+<html>
