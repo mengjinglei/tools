@@ -15,3 +15,8 @@
 * cross_domain: 是否启动cross domain
 
 ```
+
+## 使用方法
+```go
+go run main.go -f proxy.conf
+```
