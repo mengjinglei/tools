@@ -40,6 +40,7 @@ func (proxy *Proxy) handler(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
+	log.Info("req header:", r.Header)
 	log.Info("req data:", string(data))
 
 	url := proxy.Url + r.RequestURI
@@ -48,6 +49,7 @@ func (proxy *Proxy) handler(w http.ResponseWriter, r *http.Request) {
 		log.Error(err)
 	}
 
+	log.Println(url)
 	copyHeader(req.Header, r.Header)
 
 	client := &http.Client{}
@@ -63,7 +65,8 @@ func (proxy *Proxy) handler(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-
+	log.Printf(string(ret))
+	log.Println(".............", resp.StatusCode)
 	fmt.Fprint(w, string(ret))
 
 }

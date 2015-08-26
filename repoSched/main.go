@@ -1,6 +1,7 @@
 package main
 
 import (
+	"math/rand"
 	"time"
 
 	"github.com/qiniu/log.v1"
@@ -15,13 +16,17 @@ type sched struct {
 }
 
 type repoSched struct {
-	Scheds map[string]*sched
-	Nc     chan interface{}
+	Scheds   map[string]*sched
+	Nc       chan interface{}
+	Timeouts map[string]time.Duration
 }
 
+var r = rand.New(rand.NewSource(43))
+
 func (s *sched) checkNotifications() (ret time.Duration) {
-	log.Info("checkNotifications in ", s.Name)
-	ret = time.Duration(time.Second * 3)
+
+	ret = time.Duration(time.Second * time.Duration(r.Intn(10)))
+	log.Infof("checkNotifications in %s, return dur:%v \n", s.Name, ret)
 	return
 }
 
@@ -31,16 +36,26 @@ func (s *sched) save() {
 
 func (s *sched) check() {
 	log.Info("check in ", s.Name)
-	s.checkNotifications()
-	time.Sleep(time.Duration(time.Microsecond * 200))
+	//time.Sleep(time.Duration(time.Microsecond * 200))
 	s.Parent.Nc <- s
 	log.Println(">>>>>>> send s.nc from ", s.Name)
 	return
 }
 
 func (s *repoSched) Run() error {
-
+	now := time.Now()
 	s.Nc = make(chan interface{}, 1)
+
+	log.Println("========= start init check=======")
+
+	for k, v := range s.Scheds {
+		timeout := v.checkNotifications()
+		v.LastCheck = now
+		s.Timeouts[k] = timeout
+		v.save()
+	}
+
+	log.Println("============= init check complete")
 
 	go s.Poll()
 	for {
@@ -55,7 +70,6 @@ func (s *repoSched) Run() error {
 		for _, s := range scheds {
 			s.check()
 			s.LastCheck = s.DueCheck
-			//s.DueCheck = s.LastCheck.Add(s.CheckFrequency)
 			//display(s)
 		}
 		//log.Println("wait for: ", nearest)
@@ -94,6 +108,9 @@ func GetNearestCheck(scheds map[string]*sched) (ret []*sched, dur time.Duration,
 		dur = time.Duration(time.Hour * 1)
 	} else {
 		dur = nearest.Sub(now)
+		if dur < 0 {
+			log.Fatal("dur is nagtive", dur)
+		}
 	}
 
 	log.Info("---get nearest---", len(ret), dur)
@@ -103,29 +120,58 @@ func GetNearestCheck(scheds map[string]*sched) (ret []*sched, dur time.Duration,
 }
 
 func (s *repoSched) Poll() {
-	log.Println("=========start poll, start init check=======")
 
-	for _, v := range s.Scheds {
-		v.checkNotifications()
-		v.save()
-	}
-	log.Println("============= init check complete")
-
-	timeout := time.Duration(time.Minute * 5)
+	go s.ContinuousCheckRepoNotifications()
 	for {
 		select {
-		case <-time.After(timeout):
-			log.Println(">>>>>>> timeout", timeout)
 		case val := <-s.Nc:
 			ss, ok := val.(*sched)
 			log.Println(">>>>>>> recieve s.nc from ", ss.Name)
-
 			if ok {
-				timeout = ss.checkNotifications()
+				ss.checkNotifications()
 				ss.save()
 			}
 		}
 	}
+}
+
+func (s *repoSched) ContinuousCheckRepoNotifications() {
+
+	for {
+		repoids, timeout := s.getMinDuration()
+		log.Printf("get min duration:%v ", timeout)
+		log.Println("repoids ", repoids)
+		select {
+		case <-time.After(timeout):
+			for _, repoid := range repoids {
+				timeout := s.Scheds[repoid].checkNotifications()
+				s.Scheds[repoid].save()
+				s.Timeouts[repoid] = timeout
+			}
+		}
+	}
+}
+
+func (s *repoSched) getMinDuration() (ret []string, timeout time.Duration) {
+
+	//TODO 提高效率
+	//get min
+	timeout = time.Duration(time.Hour * 0xffff)
+	for k, v := range s.Timeouts {
+		if v < timeout {
+			timeout = v
+			ret = ret[:0]
+			ret = append(ret, k)
+		} else if v == timeout {
+			ret = append(ret, k)
+		}
+	}
+
+	//map[string]duration.sub(min)
+	for k, v := range s.Timeouts {
+		s.Timeouts[k] = v - timeout
+	}
+	return
 }
 
 func main() {
@@ -134,17 +180,17 @@ func main() {
 
 	one := &sched{
 		Name:           "one",
-		CheckFrequency: time.Duration(time.Second * 10),
+		CheckFrequency: time.Duration(time.Second * 1000),
 		LastCheck:      now,
 	}
 	two := &sched{
 		Name:           "two",
-		CheckFrequency: time.Duration(time.Second * 7),
+		CheckFrequency: time.Duration(time.Second * 700),
 		LastCheck:      now,
 	}
 	three := &sched{
 		Name:           "three",
-		CheckFrequency: time.Duration(time.Second * 3),
+		CheckFrequency: time.Duration(time.Second * 300),
 		LastCheck:      now,
 	}
 
@@ -154,8 +200,9 @@ func main() {
 	ss["three"] = three
 
 	reposched := &repoSched{
-		Scheds: ss,
-		Nc:     make(chan interface{}),
+		Scheds:   ss,
+		Nc:       make(chan interface{}),
+		Timeouts: make(map[string]time.Duration),
 	}
 
 	one.Parent = reposched
