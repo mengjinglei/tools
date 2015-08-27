@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io/ioutil"
 
+	"bosun.org/_third_party/github.com/boltdb/bolt"
 	"bosun.org/_third_party/github.com/influxdb/client"
 
 	"math/rand"
@@ -14,16 +15,113 @@ import (
 	"strings"
 	"time"
 
-	_ "bosun.org/cmd/bosun/conf"
-
+	"github.com/qiniu/db/mgoutil.v3"
 	"github.com/qiniu/log.v1"
+	"qbox.us/cc/config"
+
+	_ "bosun.org/cmd/bosun/conf"
 )
+
+type TesterConfig struct {
+	Port      int    `json:"port"`
+	MongoHost string `json:"mongo"`
+}
+type collection struct {
+	Notify     mgoutil.Collection `coll:"notify"`
+	Repo       mgoutil.Collection `coll:"repo"`
+	RepoConfig mgoutil.Collection `coll:"repoConfig"`
+	Alert      mgoutil.Collection `coll:"alert"`
+}
+type Service struct {
+	colls        collection
+	influxClient *client.Client
+	db           *bolt.DB
+	done         chan bool
+}
+type web struct {
+	colls collection
+}
+
+type M map[string]interface{}
+
+func (service *web) notifyHandler(w http.ResponseWriter, r *http.Request) {
+
+	log.Info("recieve req url:", r.RequestURI)
+	data, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		return
+	}
+	log.Info("req data:", string(data))
+
+	//get repoid and alert name
+	repoid := r.FormValue("id")
+	alert := r.FormValue("alert")
+
+	if repoid == "" || alert == "" {
+		log.Debug("repoid or alert is empty")
+		fmt.Fprintf(w, "repoid or alert is empty")
+		return
+	}
+
+	//insert repoid, alert, and time
+	err = service.colls.Notify.Insert(M{"id": repoid, "alert": alert, "time": time.Now().Unix()})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Fprint(w, "ok")
+}
+
+func (service *web) checkHandler(w http.ResponseWriter, r *http.Request) {
+
+}
+
+func New() *Service {
+
+	config.Init("f", "tester", "collect.conf")
+	var conf TesterConfig
+	if err := config.Load(&conf); err != nil {
+		log.Fatal("config.Load failed:", err)
+		return nil
+	}
+
+	//init mongo
+	var colls collection
+	_, err := mgoutil.Open(&colls, &mgoutil.Config{Host: "127.0.0.1", DB: "pandora_test"})
+	if err != nil {
+		log.Fatal("open mongo fail:", err)
+	}
+	colls.Alert.RemoveAll(M{})
+	colls.Repo.RemoveAll(M{})
+	colls.RepoConfig.RemoveAll(M{})
+	c := NewInfluxClient()
+
+	db, err := bolt.Open("RepoConfigDB", 0600, nil)
+	if err != nil {
+		log.Fatal("RepoConfigDB open fail", err)
+	}
+
+	//init service
+	srv := &Service{colls: colls, influxClient: c, done: make(chan bool), db: db}
+	return srv
+}
+
+func collect(c collection) {
+	w := &web{colls: c}
+
+	http.HandleFunc("/notify", w.notifyHandler)
+	http.HandleFunc("/check", w.checkHandler)
+	err := http.ListenAndServe(":"+strconv.Itoa(8800), nil)
+	if err != nil {
+		log.Error(err)
+	}
+}
 
 const (
 	InfluxHost = "127.0.0.1"
 	InfluxPort = 8086
 	MyDB       = "bosunTestDB"
-	RepoLimit  = 10000
+	RepoLimit  = 10
 )
 
 func main() {
@@ -31,7 +129,7 @@ func main() {
 	log.Debug("new success")
 	go srv.run()
 	log.Debug("start run")
-	go collect(srv.colls)
+	//go collect(srv.colls)
 	log.Debug("start collect")
 	<-srv.done
 }
@@ -48,40 +146,54 @@ func (s *Service) run() {
 		//write data point into influxdb
 		repoids = append(repoids, repoid)
 	}
-	log.Println(repoids)
 	go writes(s.influxClient, repoids)
 	log.Debug("write points")
-	go NewAlert(repoids)
+	go NewAlert(s.colls.RepoConfig, s.colls.Alert, repoids)
 	<-s.done
 }
 
-func NewAlert(repoids []string) {
+func NewAlert(coll, alertColl mgoutil.Collection, repoids []string) {
 
 	req := "req"
-	//creat notification
-	for _, repoid := range repoids {
-		defaultNotification := fmt.Sprintf("\n notification default {\n get = http://127.0.0.1:8800/notify?id=%s&alert=%s\n next = default\n timeout = 1m\n}", repoid, repoid+"_"+req)
-		url := fmt.Sprintf("http://127.0.0.1:9090/v1/repos/%s/notifications", repoid)
-		log.Info(defaultNotification)
-		resp, err := post("create notification default", url, []byte(defaultNotification))
-		if err != nil {
-			log.Debug(resp, err)
-			return
-		}
-	}
-
+	now := time.Now()
 	//create alerts
 	for pos, repoid := range repoids {
+		defaultNotification := fmt.Sprintf("\n notification default {\n get = http://127.0.0.1:8801/notify?id=%s&alert=%s\n next = default\n timeout = 1m\n}", repoid, repoid+"_"+req)
+
 		alert := fmt.Sprintf("lookup req{\n entry code=* {\n high=1\n} } \n alert %s_req {\ncrit=max(influx(\"%s\",\"select value from %s group by code,host\",\"8h10m\",\"0m\",\"code,host\")) > 2 \ncritNotification=default \n template=default\n}", repoid, MyDB, repoids[pos%300])
-		url := fmt.Sprintf("http://127.0.0.1:9090/v1/repos/%s/alert", repoid)
-		resp, err := post("create alert req", url, []byte(alert))
+		err := saveConfig(coll, alertColl, repoid, defaultNotification+alert)
 		if err != nil {
-			log.Debug(resp, err)
+			log.Debug(err)
 			return
 		}
-		log.Debug("create alert for ", repoid)
-		time.Sleep(time.Second)
+		log.Info("save config for ", repoid)
 	}
+
+	log.Info("write config done in ", time.Now().Sub(now))
+}
+
+type storedConfig struct {
+	Text     string
+	LastUsed time.Time
+}
+
+const repoConfigTextBucket = "repoConfigText"
+
+func saveConfig(repoConfigColl, alertColl mgoutil.Collection, repoid, text string) (err error) {
+
+	data := storedConfig{Text: text, LastUsed: time.Now()}
+
+	err = repoConfigColl.Insert(M{"id": repoid, "data": data})
+	if err != nil {
+		return
+	}
+
+	err = alertColl.Insert(M{"id": repoid, "frequency": "30s"})
+	if err != nil {
+		return
+	}
+
+	return
 }
 
 func writes(c *client.Client, repoids []string) {
