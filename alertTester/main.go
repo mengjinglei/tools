@@ -121,7 +121,7 @@ const (
 	InfluxHost = "127.0.0.1"
 	InfluxPort = 8086
 	MyDB       = "bosunTestDB"
-	RepoLimit  = 10
+	RepoLimit  = 10000
 )
 
 func main() {
@@ -129,7 +129,7 @@ func main() {
 	log.Debug("new success")
 	go srv.run()
 	log.Debug("start run")
-	//go collect(srv.colls)
+	go collect(srv.colls)
 	log.Debug("start collect")
 	<-srv.done
 }
@@ -158,7 +158,7 @@ func NewAlert(coll, alertColl mgoutil.Collection, repoids []string) {
 	now := time.Now()
 	//create alerts
 	for pos, repoid := range repoids {
-		defaultNotification := fmt.Sprintf("\n notification default {\n get = http://127.0.0.1:8801/notify?id=%s&alert=%s\n next = default\n timeout = 1m\n}", repoid, repoid+"_"+req)
+		defaultNotification := fmt.Sprintf("\n notification default {\n get = http://127.0.0.1:8800/notify?id=%s&alert=%s\n next = default\n timeout = 1m\n}", repoid, repoid+"_"+req)
 
 		alert := fmt.Sprintf("lookup req{\n entry code=* {\n high=1\n} } \n alert %s_req {\ncrit=max(influx(\"%s\",\"select value from %s group by code,host\",\"8h10m\",\"0m\",\"code,host\")) > 2 \ncritNotification=default \n template=default\n}", repoid, MyDB, repoids[pos%300])
 		err := saveConfig(coll, alertColl, repoid, defaultNotification+alert)
