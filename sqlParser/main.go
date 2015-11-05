@@ -61,7 +61,34 @@ func main() {
 	log.Println(stmt.Dimensions)
 
 	//host := "127.0.0.1:9092"
-	log.Println(time.Now())
+	log.Println(time.Now().UTC())
+
+	log.Println(".............................")
+	testTimeRange()
 }
 
-//连着API gate的测试用, 不对代码进行任何封装
+func testTimeRange() {
+	sql := "select vlaue from req where time > now() - 1h"
+
+	st, err := influxql.NewParser(strings.NewReader(sql)).ParseStatement()
+	if err != nil {
+		err = errors.Info(err).Detail(err)
+		log.Debug(err)
+		return
+	}
+
+	//ensure the sql statement is a select statement
+	stmt, ok := st.(*influxql.SelectStatement)
+	if !ok {
+		log.Info("not a valid select statement")
+		return
+	}
+
+	//get min and max of sql
+	log.Info(stmt.Condition)
+	min, max := influxql.TimeRange(stmt.Condition)
+	log.Printf("Min:%v, Max:%v", min, max)
+
+	log.Printf("Min:%d, Max:%d", min.Unix()+offsetSeconds, max.Unix()+offsetSeconds)
+
+}

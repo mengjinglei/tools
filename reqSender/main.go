@@ -28,6 +28,8 @@ func (proxy *Proxy) staticHandler(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, r.URL.Path[1:])
 }
 
+func (proxy *Proxy) testHandler(w http.ResponseWriter, r *http.Request) {
+}
 func (proxy *Proxy) handler(w http.ResponseWriter, r *http.Request) {
 
 	if proxy.CrossDomain {
@@ -94,6 +96,7 @@ func main() {
 	http.HandleFunc("/send/", proxy.sendHandler)
 	http.HandleFunc("/static/", proxy.staticHandler)
 	http.HandleFunc("/", proxy.handler)
+	http.HandleFunc("/test", proxy.testHandler)
 	err := http.ListenAndServe(":"+strconv.Itoa(proxy.Port), nil)
 	if err != nil {
 		log.Error(err)
